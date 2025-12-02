@@ -1,6 +1,6 @@
 /**
  * @file device.cpp
- * @brief Лабораторная работа. Реализация классов Stream, Device, Mixer, Reactor с поддержкой weak_ptr связи поток–аппарат.
+ * @brief Лабораторная работа. Реализация классов Stream, Device, Mixer, Reactor с поддержкой weak_ptr.
  */
 
 #include <iostream>
@@ -13,7 +13,7 @@
 
 using namespace std;
 
-int streamcounter = 0; ///< Глобальный счётчик для генерации имён потоков.
+int streamcounter = 0;
 const float POSSIBLE_ERROR = 0.01;
 const int MIXER_OUTPUTS = 1;
 
