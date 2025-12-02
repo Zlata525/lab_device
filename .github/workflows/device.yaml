@@ -1,4 +1,4 @@
-name: C++ CI with GoogleTest
+name: C/C++ CI (coverage + gtest)
 
 on:
   push:
@@ -9,22 +9,44 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-    - name: Install GoogleTest
-      run: |
-        sudo apt update
-        sudo apt install -y libgtest-dev cmake
-        cd /usr/src/gtest
-        sudo cmake CMakeLists.txt
-        sudo make
-        sudo cp lib/*.a /usr/lib
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y libgtest-dev cmake gcovr lcov build-essential
 
-    - name: Build project
-      run: make
+      - name: Build GoogleTest (system install)
+        run: |
+          cd /usr/src/gtest
+          sudo cmake CMakeLists.txt
+          sudo make
+          sudo cp lib/*.a /usr/lib || true
 
-    - name: Run tests
-      run: ./a.out
+      - name: Build project with coverage flags
+        run: |
+          # compile tests with coverage flags
+          g++ -std=c++20 device.cpp -o tests \
+            -lgtest -lgtest_main -pthread \
+            -fprofile-arcs -ftest-coverage
+
+      - name: Run tests
+        run: |
+          ./tests
+
+      - name: Generate coverage JSON for badge
+        run: |
+          # produce JSON summary (gcovr must be installed)
+          gcovr --json-summary -o coverage.json .
+
+      - name: Publish coverage.json to gh-pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: .
+          publish_branch: gh-pages
+          keep_files: true
+          allow_empty_commit: true
+
