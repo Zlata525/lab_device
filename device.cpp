@@ -1,7 +1,6 @@
 /**
- * @file main.cpp
- *
- * @brief A C++ program demonstrating the usage of the Stream and Device classes.
+ * @file device.cpp
+ * @brief Лабораторная работа. Реализация классов Stream, Device, Mixer, Reactor с поддержкой weak_ptr связи поток–аппарат.
  */
 
 #include <iostream>
@@ -9,339 +8,256 @@
 #include <vector>
 #include <memory>
 #include <cmath>
+#include <stdexcept>
+#include <gtest/gtest.h>
 
 using namespace std;
 
-int streamcounter; ///< Global variable to keep track of stream creation.
-
-const int MIXER_OUTPUTS = 1;
+int streamcounter = 0; ///< Глобальный счётчик для генерации имён потоков.
 const float POSSIBLE_ERROR = 0.01;
+const int MIXER_OUTPUTS = 1;
+
+/**
+ * @class Device
+ * @brief Базовый класс технологического аппарата.
+ */
+class Device;
 
 /**
  * @class Stream
- * @brief Represents a chemical stream with a name and mass flow.
+ * @brief Класс материального потока.
+ *
+ * Хранит массовый расход, имя и ссылки на аппарат-источник и аппарат-получатель
+ * с помощью weak_ptr<Device>.
  */
-class Stream
-{
+class Stream {
 private:
-    double mass_flow; ///< The mass flow rate of the stream.
-    string name;      ///< The name of the stream.
+    double mass_flow = 0.0;
+    string name;
+
+    weak_ptr<Device> fromDevice; ///< Из какого аппарата вытекает.
+    weak_ptr<Device> toDevice;   ///< В какой аппарат втекает.
 
 public:
-    /**
-     * @brief Constructor to create a Stream with a unique name.
-     * @param s An integer used to generate a unique name for the stream.
-     */
-    Stream(int s){setName("s"+std::to_string(s));}
 
-    /**
-     * @brief Set the name of the stream.
-     * @param s The new name for the stream.
-     */
-    void setName(string s){name=s;}
+    /// Создание потока с уникальным именем (s1, s2...)
+    Stream(int s) {
+        name = "s" + to_string(s);
+    }
 
-    /**
-     * @brief Get the name of the stream.
-     * @return The name of the stream.
-     */
-    string getName(){return name;}
+    /// Установка массового расхода
+    void setMassFlow(double m) { mass_flow = m; }
 
-    /**
-     * @brief Set the mass flow rate of the stream.
-     * @param m The new mass flow rate value.
-     */
-    void setMassFlow(double m){mass_flow=m;}
+    /// Получение массового расхода
+    double getMassFlow() const { return mass_flow; }
 
-    /**
-     * @brief Get the mass flow rate of the stream.
-     * @return The mass flow rate of the stream.
-     */
-    double getMassFlow() const {return mass_flow;}
+    /// Получить имя потока
+    string getName() const { return name; }
 
-    /**
-     * @brief Print information about the stream.
-     */
-    void print() { cout << "Stream " << getName() << " flow = " << getMassFlow() << endl; }
+    /// Связать поток с аппаратом-источником
+    void setFrom(shared_ptr<Device> dev) { fromDevice = dev; }
+
+    /// Связать поток с аппаратом-получателем
+    void setTo(shared_ptr<Device> dev) { toDevice = dev; }
+
+    /// Получить weak_ptr на аппарат-источник
+    weak_ptr<Device> getFromDevice() const { return fromDevice; }
+
+    /// Получить weak_ptr на аппарат-получатель
+    weak_ptr<Device> getToDevice() const { return toDevice; }
 };
 
 /**
  * @class Device
- * @brief Represents a device that manipulates chemical streams.
+ * @brief Базовый класс технологического аппарата.
  */
-class Device
-{
+class Device : public enable_shared_from_this<Device> {
 protected:
-    vector<shared_ptr<Stream>> inputs;  ///< Input streams connected to the device.
-    vector<shared_ptr<Stream>> outputs; ///< Output streams produced by the device.
-    int inputAmount;
-    int outputAmount;
+    int inputAmount = 0;
+    int outputAmount = 0;
+    bool isCalculated = false;
+
 public:
-    /**
-     * @brief Add an input stream to the device.
-     * @param s A shared pointer to the input stream.
-     */
-    void addInput(shared_ptr<Stream> s){
-      if(inputs.size() < inputAmount) inputs.push_back(s);
-      else throw"INPUT STREAM LIMIT!";
-    }
-    /**
-     * @brief Add an output stream to the device.
-     * @param s A shared pointer to the output stream.
-     */
-    void addOutput(shared_ptr<Stream> s){
-      if(outputs.size() < outputAmount) outputs.push_back(s);
-      else throw "OUTPUT STREAM LIMIT!";
-    }
+    vector<shared_ptr<Stream>> inputs;
+    vector<shared_ptr<Stream>> outputs;
 
-    /**
-     * @brief Update the output streams of the device (to be implemented by derived classes).
-     */
-    virtual void updateOutputs() = 0;
-};
+    Device() = default;
 
-class Mixer: public Device
-{
-    private:
-      int _inputs_count = 0;
-    public:
-      Mixer(int inputs_count): Device() {
-        _inputs_count = inputs_count;
-      }
-      void addInput(shared_ptr<Stream> s) {
-        if (inputs.size() == _inputs_count) {
-          throw "Too much inputs"s;
-        }
+    /// Добавить входной поток
+    void addInput(shared_ptr<Stream> s) {
+        if (inputs.size() >= inputAmount)
+            throw runtime_error("Превышен лимит входных потоков");
         inputs.push_back(s);
-      }
-      void addOutput(shared_ptr<Stream> s) {
-        if (outputs.size() == MIXER_OUTPUTS) {
-          throw "Too much outputs"s;
-        }
+        s->setTo(shared_from_this()); // поток втекает в аппарат
+    }
+
+    /// Добавить выходной поток
+    void addOutput(shared_ptr<Stream> s) {
+        if (outputs.size() >= outputAmount)
+            throw runtime_error("Превышен лимит выходных потоков");
         outputs.push_back(s);
-      }
-      void updateOutputs() override {
-        double sum_mass_flow = 0;
-        for (const auto& input_stream : inputs) {
-          sum_mass_flow += input_stream -> getMassFlow();
-        }
-
-        if (outputs.empty()) {
-          throw "Should set outputs before update"s;
-        }
-
-        double output_mass = sum_mass_flow / outputs.size(); // divide 0
-
-        for (auto& output_stream : outputs) {
-          output_stream -> setMassFlow(output_mass);
-        }
-      }
-};
-
-void shouldSetOutputsCorrectlyWithOneOutput() {
-    streamcounter=0;
-    Mixer d1 = Mixer(2);
-    
-    shared_ptr<Stream> s1(new Stream(++streamcounter));
-    shared_ptr<Stream> s2(new Stream(++streamcounter));
-    shared_ptr<Stream> s3(new Stream(++streamcounter));
-    s1->setMassFlow(10.0);
-    s2->setMassFlow(5.0);
-
-    d1.addInput(s1);
-    d1.addInput(s2);
-    d1.addOutput(s3);
-
-    d1.updateOutputs();
-
-    if (abs(s3->getMassFlow()) - 15 < POSSIBLE_ERROR) {
-      cout << "Test 1 passed"s << endl;
-    } else {
-      cout << "Test 1 failed"s << endl;
-    }
-}
-
-void shouldCorrectOutputs() {
-    streamcounter=0;
-    Mixer d1 = Mixer(2);
-    
-    shared_ptr<Stream> s1(new Stream(++streamcounter));
-    shared_ptr<Stream> s2(new Stream(++streamcounter));
-    shared_ptr<Stream> s3(new Stream(++streamcounter));
-    shared_ptr<Stream> s4(new Stream(++streamcounter));
-    s1->setMassFlow(10.0);
-    s2->setMassFlow(5.0);
-
-    d1.addInput(s1);
-    d1.addInput(s2);
-    d1.addOutput(s3);
-
-    try {
-      d1.addOutput(s4);
-    } catch (const string ex) {
-      if (ex == "Too much outputs"s) {
-        cout << "Test 2 passed"s << endl;
-
-        return;
-      }
+        s->setFrom(shared_from_this()); // поток вытекает из аппарата
     }
 
-    cout << "Test 2 failed"s << endl;
-}
+    /// Проверка, был ли аппарат уже рассчитан
+    bool isDeviceCalculated() const { return isCalculated; }
 
-void shouldCorrectInputs() {
-    streamcounter=0;
-    Mixer d1 = Mixer(2);
-    
-    shared_ptr<Stream> s1(new Stream(++streamcounter));
-    shared_ptr<Stream> s2(new Stream(++streamcounter));
-    shared_ptr<Stream> s3(new Stream(++streamcounter));
-    shared_ptr<Stream> s4(new Stream(++streamcounter));
-    s1->setMassFlow(10.0);
-    s2->setMassFlow(5.0);
+    /// Обновление выходных потоков — виртуальная функция
+    virtual void updateOutputs() = 0;
 
-    d1.addInput(s1);
-    d1.addInput(s2);
-    d1.addOutput(s3);
-
-    try {
-      d1.addInput(s4);
-    } catch (const string ex) {
-      if (ex == "Too much inputs"s) {
-        cout << "Test 3 passed"s << endl;
-
-        return;
-      }
-    }
-
-    cout << "Test 3 failed"s << endl;
-}
-
-class Reactor : public Device{
-public:
-    Reactor(bool isDoubleReactor) {
-        inputAmount = 1;
-        if (isDoubleReactor) outputAmount = 2;
-        else inputAmount = 1;
-    }
-    
-    void updateOutputs() override{
-        double inputMass = inputs.at(0) -> getMassFlow();
-            for(int i = 0; i < outputAmount; i++){
-            double outputLocal = inputMass * (1/outputAmount);
-            outputs.at(i) -> setMassFlow(outputLocal);
-        }
+    /// Получение имени аппарата (по адресу)
+    virtual string getDeviceName() const {
+        return "Device@" + to_string((uintptr_t)this);
     }
 };
-
-void testTooManyOutputStreams(){
-    streamcounter=0;
-    
-    Reactor dl = new Reactor(false);
-    
-    shared_ptr<Stream> s1(new Stream(++streamcounter));
-    shared_ptr<Stream> s2(new Stream(++streamcounter));
-    shared_ptr<Stream> s3(new Stream(++streamcounter));
-    s1->setMassFlow(10.0);
-    s2->setMassFlow(5.0);
-    dl.addInput(s1);
-    dl.addOutput(s2);
-    try{
-        dl.addOutput(s3);
-    } catch(const string ex){
-         if (ex == "OUTPUT STREAM LIMIT!")
-            cout << "Test 1 passed" << endl;
-
-        return;
-    }
-    
-     cout << "Test 1 failed" << endl;
-}
-
-void testTooManyInputStreams(){
-    streamcounter=0;
-    
-    Reactor dl = new Reactor(false);
-    
-    shared_ptr<Stream> s1(new Stream(++streamcounter));
-    shared_ptr<Stream> s3(new Stream(++streamcounter));
-    s1->setMassFlow(10.0);
-    s2->setMassFlow(5.0);
-    dl.addInput(s1);
-    try{
-        dl.addInput(s3);
-    } catch(const string ex){
-         if (ex == "INPUT STREAM LIMIT!")
-            cout << "Test 2 passed" << endl;
-
-        return;
-    }
-    
-     cout << "Test 2 failed"s << endl;
-}
-
-void testInputEqualOutput(){
-        streamcounter=0;
-    
-    Reactor dl = new Reactor(true);
-    
-    shared_ptr<Stream> s1(new Stream(++streamcounter));
-    shared_ptr<Stream> s2(new Stream(++streamcounter));
-    shared_ptr<Stream> s3(new Stream(++streamcounter));
-    s1->setMassFlow(10.0);
-    s2->setMassFlow(5.0);
-    dl.addInput(s1);
-    dl.addOutput(s2);
-    dl.addOutput(s3);
-    
-    dl.updateOutputs();
-    
-    if(dl.outputs.at(0).getMassFlow + dl.outputs.at(1).getMassFlow == dl.inputs.at(0).getMassFlow)
-        cout << "Test 3 passed" << endl;
-    else
-        cout << "Test 3 failed" << endl;
-}
-
-void tests(){
-    testInputEqualOutput();
-    testTooManyOutputStreams();
-    testTooManyInputStreams();
-    
-    shouldSetOutputsCorrectlyWithOneOutput();
-    shouldCorrectOutputs();
-    shouldCorrectInputs();
-}
 
 /**
- * @brief The entry point of the program.
- * @return 0 on successful execution.
+ * @class Mixer
+ * @brief Узел смешения: суммирует входные потоки.
  */
-int main()
-{
+class Mixer : public Device {
+private:
+    int requiredInputs;
+
+public:
+    Mixer(int n) {
+        inputAmount = n;
+        outputAmount = MIXER_OUTPUTS;
+        requiredInputs = n;
+    }
+
+    void addInput(shared_ptr<Stream> s) {
+        if (inputs.size() >= requiredInputs)
+            throw runtime_error("Too much inputs");
+        inputs.push_back(s);
+        s->setTo(shared_from_this());
+    }
+
+    void addOutput(shared_ptr<Stream> s) {
+        if (outputs.size() >= MIXER_OUTPUTS)
+            throw runtime_error("Too much outputs");
+        outputs.push_back(s);
+        s->setFrom(shared_from_this());
+    }
+
+    void updateOutputs() override {
+        if (isCalculated)
+            throw runtime_error("Device is already calculated");
+
+        double sum = 0.0;
+        for (auto &st : inputs)
+            sum += st->getMassFlow();
+
+        if (outputs.empty())
+            throw runtime_error("Нет выходных потоков");
+
+        outputs[0]->setMassFlow(sum);
+        isCalculated = true;
+    }
+};
+
+/**
+ * @class Reactor
+ * @brief Реактор: делит вход на 1 или 2 выхода.
+ */
+class Reactor : public Device {
+public:
+    Reactor(bool doubleOutput) {
+        inputAmount = 1;
+        outputAmount = doubleOutput ? 2 : 1;
+    }
+
+    void updateOutputs() override {
+        if (isCalculated)
+            throw runtime_error("Device is already calculated");
+
+        double m = inputs[0]->getMassFlow();
+        double part = m / outputAmount;
+
+        for (auto &o : outputs)
+            o->setMassFlow(part);
+
+        isCalculated = true;
+    }
+};
+
+//
+// ------------------------- ТЕСТЫ -------------------------
+//
+
+TEST(StreamTests, FromToSetCorrectly) {
+    auto dev = make_shared<Mixer>(2);
+    auto s = make_shared<Stream>(1);
+
+    s->setFrom(dev);
+    s->setTo(dev);
+
+    ASSERT_FALSE(s->getFromDevice().expired());
+    ASSERT_FALSE(s->getToDevice().expired());
+}
+
+TEST(MixerTests, SumOfFlows) {
     streamcounter = 0;
+    auto mix = make_shared<Mixer>(2);
 
-    // Create streams
-    shared_ptr<Stream> s1(new Stream(++streamcounter));
-    shared_ptr<Stream> s2(new Stream(++streamcounter));
-    shared_ptr<Stream> s3(new Stream(++streamcounter));
+    auto s1 = make_shared<Stream>(++streamcounter);
+    auto s2 = make_shared<Stream>(++streamcounter);
+    auto s3 = make_shared<Stream>(++streamcounter);
 
-    // Set mass flows
-    s1->setMassFlow(10.0);
-    s2->setMassFlow(5.0);
+    s1->setMassFlow(10);
+    s2->setMassFlow(5);
 
-    // Create a device (e.g., Mixer) and add input/output streams
-    // Mixer d1;
-    // d1.addInput(s1);
-    // d1.addInput(s2);
-    // d1.addOutput(s3);
+    mix->addInput(s1);
+    mix->addInput(s2);
+    mix->addOutput(s3);
 
-    // Update the outputs of the device
-    // d1.updateOutputs();
+    mix->updateOutputs();
 
-    // Print stream information
-//    s1->print();
-//    s2->print();
-//    s3->print();
-    tests();
+    ASSERT_NEAR(s3->getMassFlow(), 15.0, POSSIBLE_ERROR);
+}
 
-    return 0;
+TEST(DeviceTests, WrongInputAmount) {
+    auto mix = make_shared<Mixer>(1);
+    auto s1 = make_shared<Stream>(1);
+    auto s2 = make_shared<Stream>(2);
+
+    mix->addInput(s1);
+    EXPECT_THROW(mix->addInput(s2), runtime_error);
+}
+
+TEST(DeviceTests, WrongOutputAmount) {
+    auto mix = make_shared<Mixer>(2);
+    auto s1 = make_shared<Stream>(1);
+    auto s2 = make_shared<Stream>(2);
+
+    mix->addOutput(s1);
+    EXPECT_THROW(mix->addOutput(s2), runtime_error);
+}
+
+TEST(ReactorTests, SplitCorrectly) {
+    auto r = make_shared<Reactor>(true);
+
+    auto s1 = make_shared<Stream>(1);
+    auto o1 = make_shared<Stream>(2);
+    auto o2 = make_shared<Stream>(3);
+
+    s1->setMassFlow(10);
+
+    r->addInput(s1);
+    r->addOutput(o1);
+    r->addOutput(o2);
+
+    r->updateOutputs();
+
+    ASSERT_NEAR(o1->getMassFlow(), 5.0, POSSIBLE_ERROR);
+    ASSERT_NEAR(o2->getMassFlow(), 5.0, POSSIBLE_ERROR);
+}
+
+//
+// ------------------------- MAIN -------------------------
+//
+
+int main(int argc, char **argv) {
+    testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();
 }
