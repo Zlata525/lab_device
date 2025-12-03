@@ -42,12 +42,12 @@ jobs:
       - name: Convert coverage to Shields.io format
         run: |
           PERC=$(python3 - <<EOF
-            import json
-            with open("coverage_raw.json") as f:
-            data=json.load(f)
-            print(int(round(data.get("line_percent", 0))))
-            EOF
-            )
+import json
+with open("coverage_raw.json") as f:
+    data=json.load(f)
+print(int(round(data.get("line_percent", 0))))
+EOF
+)
           COLOR="red"
           if [ $PERC -ge 80 ]; then COLOR="green"; elif [ $PERC -ge 50 ]; then COLOR="yellow"; fi
 
@@ -61,3 +61,4 @@ jobs:
           publish_branch: gh-pages
           keep_files: true
           allow_empty_commit: true
+
