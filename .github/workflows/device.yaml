@@ -1,4 +1,4 @@
-name: C/C++ CI (coverage + gtest)
+name: C/C++ CI
 
 on:
   push:
@@ -14,51 +14,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Install dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y libgtest-dev cmake gcovr lcov build-essential
-
-      - name: Build GoogleTest (system install)
-        run: |
-          cd /usr/src/gtest
-          sudo cmake CMakeLists.txt
-          sudo make
-          sudo cp lib/*.a /usr/lib || true
-
-      - name: Build project with coverage flags
-        run: |
-          g++ -std=c++20 device.cpp -o tests \
-            -lgtest -lgtest_main -pthread \
-            -fprofile-arcs -ftest-coverage
+      - name: Build project
+        run: g++ -std=c++20 device.cpp -o a.out
 
       - name: Run tests
-        run: ./tests
+        run: ./a.out
 
-      - name: Generate raw gcovr coverage
-        run: |
-          gcovr --json-summary -o coverage_raw.json .
-
-      - name: Convert coverage to Shields.io format
-        run: |
-          PERC=$(python3 - <<EOF
-import json
-with open("coverage_raw.json") as f:
-    data=json.load(f)
-print(int(round(data.get("line_percent", 0))))
-EOF
-)
-          COLOR="red"
-          if [ $PERC -ge 80 ]; then COLOR="green"; elif [ $PERC -ge 50 ]; then COLOR="yellow"; fi
-
-          echo "{\"schemaVersion\":1,\"label\":\"coverage\",\"message\":\"${PERC}%\",\"color\":\"${COLOR}\"}" > coverage.json
-
-      - name: Publish coverage badge to gh-pages
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: .
-          publish_branch: gh-pages
-          keep_files: true
-          allow_empty_commit: true
 
